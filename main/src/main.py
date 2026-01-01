@@ -6,11 +6,11 @@ from std_msgs.msg import Int16MultiArray
 import cv2
 from cv_bridge import CvBridge
 # TODO: 아래 모듈들은 네가 이후 구현할 파일들
-# from mask import MaskProcessor
+from mask import MaskProcessor
 # from stop_line import StopLineDetector
 # from traffic_light import TrafficLightDetector
 # from rubbercone import RubberconeNavigator
-# from line_offset import LineOffsetEstimator
+from line_offset import LineOffsetEstimator
 # from control import Controller
 
 # TODO: 실제 사용하는 모터 메시지 타입에 맞춰 수정
@@ -81,7 +81,7 @@ class MainNode:
         # 5) 각 기능 모듈 인스턴스 생성
         #    (여기서는 뼈대만: 실제 클래스/함수는 나중에 구현)
         # =========================
-        self.mask_proc = None
+        self.mask_proc = MaskProcessor()
         self.stopline_det = None
         self.tl_det = None
         self.rubber_nav = None
@@ -93,7 +93,7 @@ class MainNode:
         # self.stopline_det = StopLineDetector()
         # self.tl_det = TrafficLightDetector()
         # self.rubber_nav = RubberconeNavigator()
-        # self.offset_est = LineOffsetEstimator()
+        self.offset_est = LineOffsetEstimator()
         # self.controller = Controller()
 
         rospy.loginfo("[main] Node initialized")
@@ -325,10 +325,14 @@ class MainNode:
             white_pixels_many = False
             ar_found = False
 
-            # (예시) 마스크 생성
-            masked_img = None
-            # if self.mask_proc is not None:
-            #     masked_img = self.mask_proc.run(img_msg)  # 또는 cv_img를 입력으로 받도록 설계
+            # ROS Image -> cv2(BGR)
+            cv_img = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="bgr8")
+
+            # mask 처리
+            yellow_mask, white_mask, gray_label = self.mask_proc.process(cv_img)
+            
+            # 시각화 
+            cv2.imshow("masked image", gray_label)
 
             # (예시) 정지선 판정
             # if self.stopline_det is not None and masked_img is not None:
@@ -345,9 +349,9 @@ class MainNode:
             # if self.rubber_nav is not None:
             #     rubbercone_found = self.rubber_nav.is_cone_found(scan_msg)
 
-            # (예시) 흰 픽셀 다수 판정(갈림길에서 흰차선으로 넘어가는 트리거)
-            # if self.mask_proc is not None and masked_img is not None:
-            #     white_pixels_many = self.mask_proc.white_pixels_many(masked_img)
+            # 흰 픽셀 다수 판정(갈림길에서 흰차선으로 넘어가는 트리거)
+            white_pixels_many = self.mask_proc.white_pixels_many(gray_label, thresh=3000)
+
 
             # (예시) AR 판정(구현 예정)
             # ar_found = False
@@ -379,12 +383,19 @@ class MainNode:
             # 5) offset 계산 (자리만)
             # ============================================
             offset = 0.0
+            debug_offset = {}
+            offset_viz = None
 
-            # if self.mode == Modes.RUBBERCONE and self.rubber_nav is not None:
-            #     offset = self.rubber_nav.get_offset(scan_msg)
-            # else:
-            #     if self.offset_est is not None and masked_img is not None:
-            #         offset = self.offset_est.get_offset(masked_img, mode=self.mode)
+            if self.mode == Modes.RUBBERCONE and self.rubber_nav is not None:
+                offset = self.rubber_nav.get_offset(scan_msg)
+            else:
+                if self.offset_est is not None and gray_label is not None:
+                    offset, debug_offset, offset_viz = self.offset_est.get_offset(
+                        gray_label=gray_label,
+                        mode=self.mode,
+                        frame_bgr=cv_img,        
+                        enable_viz=True         
+                    )
 
             # ============================================
             # 6) control 계산 (steer/speed) (자리만)
@@ -407,6 +418,8 @@ class MainNode:
             # ============================================
             # 8) 시각화 (raw 이미지에 정보 오버레이)
             # ============================================
+
+
             if self.enable_viz:
                 try:
                     # ROS Image -> cv2 BGR 이미지 변환
@@ -455,6 +468,16 @@ class MainNode:
                     cv2.imshow(self.viz_win, cv_img)
 
                     # q 누르면 안전 종료
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q"):
+                        rospy.signal_shutdown("user quit (viz)")
+                        break
+
+                    if offset_viz is not None:
+                        cv2.imshow("offset_viz", offset_viz)
+                    else:
+                        cv2.imshow("offset_viz", cv_img)
+
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord("q"):
                         rospy.signal_shutdown("user quit (viz)")

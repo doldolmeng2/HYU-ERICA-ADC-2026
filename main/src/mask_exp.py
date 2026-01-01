@@ -41,7 +41,7 @@ class HLSMaskExp:
     def _create_trackbars(self):
         # Yellow (HLS)
         cv2.createTrackbar("Y_H_min", self.ctrl_win, 26, 179, lambda x: None)
-        cv2.createTrackbar("Y_H_max", self.ctrl_win, 36, 179, lambda x: None)
+        cv2.createTrackbar("Y_H_max", self.ctrl_win, 33, 179, lambda x: None)
         cv2.createTrackbar("Y_L_min", self.ctrl_win, 40, 255, lambda x: None)
         cv2.createTrackbar("Y_L_max", self.ctrl_win, 220, 255, lambda x: None)
         cv2.createTrackbar("Y_S_min", self.ctrl_win, 37, 255, lambda x: None)
