@@ -1,0 +1,10 @@
+<launch>
+    <include file="$(find rplidar_ros)/launch/rplidar.launch" />
+
+    <node pkg="my_drive" type="camera.py" name="camera_node"
+      output="screen"
+      launch-prefix="bash -lc 'v4l2-ctl -d /dev/video0 -c power_line_frequency=2; exec &quot;$0&quot; &quot;$@&quot;'"/>
+
+    <node pkg="my_drive" type="motor_serial.py" name="motor_serial_node" output="screen" />
+
+    </launch>
