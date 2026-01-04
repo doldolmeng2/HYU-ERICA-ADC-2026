@@ -11,7 +11,7 @@ from mask import MaskProcessor
 # from traffic_light import TrafficLightDetector
 # from rubbercone import RubberconeNavigator
 from line_offset import LineOffsetEstimator
-# from control import Controller
+from control import Controller
 
 # TODO: 실제 사용하는 모터 메시지 타입에 맞춰 수정
 
@@ -94,7 +94,7 @@ class MainNode:
         # self.tl_det = TrafficLightDetector()
         # self.rubber_nav = RubberconeNavigator()
         self.offset_est = LineOffsetEstimator()
-        # self.controller = Controller()
+        self.controller = Controller()
 
         rospy.loginfo("[main] Node initialized")
         rospy.loginfo(f"[main] sub: {self.image_topic}, {self.scan_topic}")
@@ -136,6 +136,7 @@ class MainNode:
         - 모드 진입 시간 갱신
         - 필요하면 모드별 변수 초기화 등
         """
+        print("mode change acc")
         if new_mode == self.mode:
             return
 
@@ -224,6 +225,7 @@ class MainNode:
         if self.mode in (Modes.Y_SPLIT_RIGHT, Modes.Y_SPLIT_LEFT):
             # 노란 정지선 감지 -> 신호대기(정지)
             if yellow_stopline:
+                print("yello stopline detect")
                 self.set_mode(Modes.SIGNAL_WAIT)
                 return
 
@@ -236,6 +238,7 @@ class MainNode:
             if green_light:
                 # TODO: 실제로는 "마지막 갈림길 방향"을 기억했다가 그걸로 복귀하는 게 안전
                 # 임시로 우회전으로 복귀(나중에 수정)
+                print("mode change acc2")
                 self.set_mode(Modes.Y_SPLIT_RIGHT)
                 return
 
@@ -245,6 +248,7 @@ class MainNode:
         if self.mode == Modes.W_LANE_FOLLOW:
             # 라바콘 인식 -> 라바콘 주행
             if rubbercone_found:
+                print("mode change acc3")
                 self.set_mode(Modes.RUBBERCONE)
                 return
 
@@ -257,6 +261,7 @@ class MainNode:
 
             # 흰 정지선 2번 감지 -> 갈림길 좌 모드로
             if self.white_stopline_count >= 2:
+                print("mode change acc4")
                 self.set_mode(Modes.Y_SPLIT_LEFT)
                 return
 
@@ -266,6 +271,7 @@ class MainNode:
         if self.mode == Modes.RUBBERCONE:
             # 라바콘이 더 이상 안 보이면 -> 흰 차선 주행으로 복귀
             if not rubbercone_found:
+                print("mode change acc5")
                 self.set_mode(Modes.W_LANE_FOLLOW)
                 return
 
@@ -275,6 +281,7 @@ class MainNode:
         # 실제로는 갈림길 이후 "흰 차선으로 넘어가는 시점"을 잡기 위해 쓰는 조건
         if self.mode in (Modes.Y_SPLIT_RIGHT, Modes.Y_SPLIT_LEFT):
             if white_pixels_many:
+                print("mode change acc6")
                 self.set_mode(Modes.W_LANE_FOLLOW)
                 return
 
@@ -403,17 +410,15 @@ class MainNode:
             steer = 90   # TODO:  기준 중립값 예시
             speed = 90    # 기본은 안전하게 90
 
-            # if self.controller is not None:
-            #     steer, speed = self.controller.compute(offset, mode=self.mode)
+            if self.controller is not None:
+                steer, speed = self.controller.compute(offset, mode=self.mode)
 
             # ============================================
             # 7) publish (/motor)
             # ============================================
-            # TODO: 실제 모터 메시지로 publish
-            # msg = XycarMotor()
-            # msg.angle = int(steer)
-            # msg.speed = int(speed)
-            # self.pub_motor.publish(msg)
+            msg = Int16MultiArray()
+            msg.data = [int(steer), int(speed)]
+            self.pub_motor.publish(msg)
             
             # ============================================
             # 8) 시각화 (raw 이미지에 정보 오버레이)
@@ -473,10 +478,10 @@ class MainNode:
                         rospy.signal_shutdown("user quit (viz)")
                         break
 
-                    if offset_viz is not None:
-                        cv2.imshow("offset_viz", offset_viz)
-                    else:
-                        cv2.imshow("offset_viz", cv_img)
+                    # if offset_viz is not None:
+                    #     cv2.imshow("offset_viz", offset_viz)
+                    # else:
+                    #     cv2.imshow("offset_viz", cv_img)
 
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord("q"):

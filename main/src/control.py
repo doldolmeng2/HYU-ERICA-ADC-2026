@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import numpy as np
 
 class Controller:
     """
@@ -33,11 +34,11 @@ class Controller:
 
         # ====== 모드별 속도(고정) ======
         # speed 단위는 너희 모터 노드 규격에 맞춰서 튜닝 필요
-        self.speed_mode0 = 105
-        self.speed_mode1 = 105
-        self.speed_mode2 = 110
-        self.speed_mode4 = 100
-        self.speed_mode5 = 95
+        self.speed_mode0 = 90
+        self.speed_mode1 = 90
+        self.speed_mode2 = 90
+        self.speed_mode4 = 90
+        self.speed_mode5 = 90
 
         # ====== 모드별 steer 제한(더 강하게 제한하고 싶으면 여기서 조절 가능) ======
         # 예: 신호대기 후 출발/AR 주행 등에서 급조향 제한
@@ -71,14 +72,48 @@ class Controller:
             speed = 95
             return int(steer), int(speed)
 
+    def _offset_to_steer_nonlinear(
+        self,
+        offset: float,
+        max_offset: float = 150.0,
+        center_steer: float = 90.0,
+        steer_range: float = 45.0,
+        gamma: float = 2.0
+    ):
+        """
+        offset (-max_offset ~ +max_offset)을
+        steer (45 ~ 135)로 비선형 변환
+        """
+
+        # 1. offset 제한
+        offset = np.clip(offset, -max_offset, max_offset)
+
+        # 2. 정규화 (-1 ~ 1)
+        norm = offset / max_offset
+
+        # 3. 비선형 변환 (중앙 둔감, 끝 민감)
+        curved = np.sign(norm) * (abs(norm) ** gamma)
+
+        # 4. steer 계산
+        steer = center_steer + curved * steer_range
+
+        # 5. 최종 안전 클램프
+        steer = np.clip(steer, 45, 135)
+
+        return float(steer)
+    
     # ---------------------------
     # mode별 함수(나중에 알고리즘 교체 쉬움)
     # ---------------------------
     def _control_mode0(self, offset: float):
-        # mode0: (예) 노란 차선 기준 오른쪽 라인 따라가기
-        steer = self._p_control(offset, self.kp_mode0, self.steer_limit_mode0)
+        steer = self._offset_to_steer_nonlinear(
+            offset=offset,
+            max_offset=150.0,
+            gamma=2.0          # 둔하면 낮추고 예민하면 높이면 됨
+        )
         speed = self.speed_mode0
         return steer, speed
+
 
     def _control_mode1(self, offset: float):
         # mode1: (예) 노란 정지선/갈림길 좌우 등 mode0과 비슷하지만 kp 다르게

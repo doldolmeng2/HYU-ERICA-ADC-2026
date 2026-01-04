@@ -88,12 +88,37 @@ class MaskProcessor:
         
         return yellow_mask, white_mask, gray_label
 
-    def white_pixels_many(self, gray_label: np.ndarray, thresh: int = 3000) -> bool:
+    def white_pixels_many(
+        self,
+        gray_label: np.ndarray,
+        thresh: int = 3000,
+        roi_y_start_ratio: float = 0.55,
+        roi_y_end_ratio: float = 1.0
+    ) -> bool:
         """
-        (선택) 갈림길 이후 '흰 픽셀 다수' 같은 트리거를 main에서 쓰고 싶을 때
-        - gray_label에서 흰색(255) 픽셀 수가 thresh 이상이면 True
+        하단 ROI에서 흰색 픽셀(255)이 일정 개수 이상이면 True
+
+        - gray_label: 0/128/255 grayscale label
+        - thresh: 흰 픽셀 개수 임계값
+        - roi_y_start_ratio: ROI 시작 비율 (기본 0.55)
+        - roi_y_end_ratio: ROI 끝 비율 (기본 1.0)
         """
+
         if gray_label is None:
             return False
-        white_count = int(np.sum(gray_label == 255))
+
+        h, w = gray_label.shape[:2]
+
+        # ROI y 범위 계산
+        y0 = int(h * roi_y_start_ratio)
+        y1 = int(h * roi_y_end_ratio)
+
+        y0 = max(0, min(h - 1, y0))
+        y1 = max(y0 + 1, min(h, y1))
+
+        roi = gray_label[y0:y1, :]
+
+        # 흰색(255) 픽셀 수 세기
+        white_count = int(np.sum(roi == 255))
+        # print("white_count : ", white_count)
         return white_count >= thresh

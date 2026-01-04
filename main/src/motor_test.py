@@ -45,7 +45,7 @@ def calculate_control(frame, lidar_ranges):
     return        : steer (45~135, 90 = 직진, 45 = 좌회전, 135 우회전), speed (90~119, 90~97 = 정지, 98+ = 직진)
     """
 
-    steer = 120   # TODO: 조향 로직
+    steer = 135   # TODO: 조향 로직
     speed = 90   # TODO: 속도 로직
 
     return steer, speed

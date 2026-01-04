@@ -24,15 +24,18 @@ class LineOffsetEstimator:
       - ROI(띠 영역)에서 yellow(128) 연결요소(blob)들을 찾음
       - 각 blob의 중심(cx)을 계산
       - 가장 오른쪽 blob 중심을 선택
-      - offset = target_x_right - chosen_cx
+      - offset = chosen_cx - target_x_right 
     """
 
     def __init__(self):
         # ====== ROI 파라미터 ======
         # ROI를 "비율"로 잡아두면 해상도 바뀌어도 자동으로 대응됨
         # 예: 하단 40%~80% 구간에서 차선이 잘 보인다고 가정
-        self.roi_y_start_ratio = 0.55
-        self.roi_y_end_ratio   = 0.85
+        self.roi_y_start_ratio = 0.65
+        self.roi_y_end_ratio   = 0.70
+
+        self.right_gate_ratio = 0.50
+        self.fallback_offset = 150.0
 
         # ====== 대상 레이블 값 ======
         self.yellow_value = 128
@@ -48,6 +51,7 @@ class LineOffsetEstimator:
 
         # ====== 시각화 ======
         self.draw_radius = 6
+
 
     def get_offset(self, gray_label: np.ndarray, mode: int, frame_bgr=None, enable_viz: bool = False):
         debug = {"mode": mode}
@@ -74,10 +78,29 @@ class LineOffsetEstimator:
             return frame_bgr.copy()
         return cv2.cvtColor(gray_label, cv2.COLOR_GRAY2BGR)
 
-    def _mode0_roi_right_yellow(self, gray_label: np.ndarray, debug: dict, frame_bgr=None, enable_viz: bool = False):
+    def _mode0_roi_right_yellow(
+        self,
+        gray_label: np.ndarray,
+        debug: dict,
+        frame_bgr=None,
+        enable_viz: bool = False
+    ):
+        """
+        mode0: 오른쪽 노란 차선 기준 offset 계산 (정지선 강건 버전)
+
+        - ROI에서 yellow(=self.yellow_value, 보통 128) blob 검출
+        - 가로폭이 너무 큰 blob은 정지선으로 간주하고 무시
+        - 남은 blob 중 가장 오른쪽(cx 최대) 선택
+        - 단, 아래 경우에는 offset 업데이트 안 하고 이전 offset 유지
+            1) 유효 blob 없음
+            2) 가장 오른쪽 blob의 cx < w * right_gate_ratio (기본 0.6)
+        """
+
         h, w = gray_label.shape[:2]
 
-        # ROI 좌표 계산
+        # =============================
+        # 1) ROI 설정
+        # =============================
         y0 = int(h * self.roi_y_start_ratio)
         y1 = int(h * self.roi_y_end_ratio)
         y0 = max(0, min(h - 1, y0))
@@ -86,12 +109,12 @@ class LineOffsetEstimator:
             y0 = max(0, h - 120)
             y1 = h
 
-        debug["img_w"] = w
-        debug["img_h"] = h
         debug["roi_y0"] = y0
         debug["roi_y1"] = y1
 
-        # 목표 x 설정
+        # =============================
+        # 2) 목표 x (target_x)
+        # =============================
         if self.target_x_right is not None:
             target_x = int(np.clip(self.target_x_right, 0, w - 1))
         else:
@@ -99,7 +122,21 @@ class LineOffsetEstimator:
 
         debug["target_x"] = target_x
 
-        # 시각화 바탕 준비
+        # =============================
+        # 3) 기준값들
+        # =============================
+        right_gate_ratio = getattr(self, "right_gate_ratio", 0.60)
+        right_gate_x = w * right_gate_ratio
+
+        max_blob_width_ratio = getattr(self, "max_blob_width_ratio", 0.65)
+        max_blob_width = w * max_blob_width_ratio
+
+        debug["right_gate_x"] = right_gate_x
+        debug["max_blob_width"] = max_blob_width
+
+        # =============================
+        # 4) 시각화 캔버스
+        # =============================
         viz = None
         if enable_viz:
             if frame_bgr is not None:
@@ -107,97 +144,112 @@ class LineOffsetEstimator:
             else:
                 viz = cv2.cvtColor(gray_label, cv2.COLOR_GRAY2BGR)
 
-            # ROI 박스 표시(초록)
+            # ROI
             cv2.rectangle(viz, (0, y0), (w - 1, y1 - 1), (0, 255, 0), 2)
+            # gate line
+            gx = int(right_gate_x)
+            cv2.line(viz, (gx, 0), (gx, h - 1), (0, 0, 255), 2)
 
-        # ROI에서 yellow 마스크 생성 (0/255)
+        # =============================
+        # 5) ROI에서 yellow mask 생성
+        # =============================
         roi = gray_label[y0:y1, :]
         yellow_bin = (roi == self.yellow_value).astype(np.uint8) * 255
 
-        # 모폴로지로 작은 점 노이즈 제거(선택)
         if self.morph_open and self.morph_open > 0:
             k = self.morph_open
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
             yellow_bin = cv2.morphologyEx(yellow_bin, cv2.MORPH_OPEN, kernel)
 
-        # 연결요소(connected components)로 blob 찾기
-        # stats: [label, x, y, w, h, area]
-        num, labels, stats, centroids = cv2.connectedComponentsWithStats(yellow_bin, connectivity=8)
+        # =============================
+        # 6) blob 검출
+        # =============================
+        num, labels, stats, centroids = cv2.connectedComponentsWithStats(
+            yellow_bin, connectivity=8
+        )
 
-        blobs = []
         centers = []
+        blobs = []
 
-        # label 0은 배경이니까 1부터
         for i in range(1, num):
             x, y, bw, bh, area = stats[i]
+
+            # 면적 필터
             if area < self.min_area:
                 continue
 
-            cx, cy = centroids[i]   # ROI 좌표계 기준
-            cx_full = float(cx)            # x는 전체 폭 그대로
-            cy_full = float(cy + y0)       # y는 ROI offset 반영
+            # ❗ 가로폭 필터 (정지선 제거)
+            if bw > max_blob_width:
+                debug.setdefault("ignored_blobs", []).append(
+                    {"bw": int(bw), "area": int(area), "reason": "too wide"}
+                )
+                if viz is not None:
+                    cv2.rectangle(
+                        viz,
+                        (int(x), int(y + y0)),
+                        (int(x + bw), int(y + y0 + bh)),
+                        (255, 0, 255),
+                        3,
+                    )
+                continue
 
-            blobs.append({
-                "bbox": (int(x), int(y + y0), int(bw), int(bh)),
-                "area": int(area),
-                "cx": cx_full,
-                "cy": cy_full,
-            })
+            cx, cy = centroids[i]
+            cx_full = float(cx)
+            cy_full = float(cy + y0)
+
             centers.append(cx_full)
+            blobs.append({"cx": cx_full, "cy": cy_full, "bw": bw})
 
-            # ✅ 시각화: 각 blob 중심 빨간 점
             if viz is not None:
-                cv2.circle(viz, (int(cx_full), int(cy_full)), self.draw_radius, (0, 0, 255), -1)
-                cv2.rectangle(viz, (int(x), int(y + y0)), (int(x + bw), int(y + y0 + bh)), (0, 0, 255), 1)
+                cv2.circle(viz, (int(cx_full), int(cy_full)), 5, (0, 0, 255), -1)
 
-        debug["blob_count"] = len(blobs)
-        debug["blobs"] = blobs
+        debug["valid_blob_count"] = len(centers)
 
-        # blob이 없으면 offset=0
+        # =============================
+        # 7) fallback: 유효 blob 없음
+        # =============================
         if len(centers) == 0:
-            debug["reason"] = "no blobs after filtering"
-            # 목표점은 찍어주기
-            if viz is not None:
-                y_ref = int((y0 + y1) * 0.5)
-                cv2.circle(viz, (target_x, y_ref), self.draw_radius, (255, 0, 0), -1)
-                cv2.putText(viz, "target", (target_x + 8, y_ref - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2, cv2.LINE_AA)
-            return 0.0, debug, viz
+            debug["fallback"] = True
+            debug["reason"] = "no valid lane blob"
+            debug["offset"] = self.prev_offset
+            return self.prev_offset, debug, viz
 
-        # 가장 오른쪽 blob 선택
-        right_cx = float(max(centers))
-        debug["chosen_right_cx"] = right_cx
+        # =============================
+        # 8) 가장 오른쪽 blob 선택
+        # =============================
+        right_cx = max(centers)
+        debug["right_cx"] = right_cx
 
-        # offset = 목표 - 현재
-        offset = float(target_x - right_cx)
+        # gate 기준 실패 → 이전 offset 유지
+        if right_cx < right_gate_x:
+            debug["fallback"] = True
+            debug["reason"] = "rightmost blob too left"
+            debug["offset"] = self.prev_offset
+            return self.prev_offset, debug, viz
+
+        # =============================
+        # 9) 정상 offset 계산
+        # =============================
+        offset = float(right_cx - target_x)
+        self.prev_offset = offset
+
+        debug["fallback"] = False
         debug["offset"] = offset
 
-        # ✅ 목표점(파란 점)은 ROI의 "중간 y"에 표시
         if viz is not None:
             y_ref = int((y0 + y1) * 0.5)
-            # 목표점(파란)
-            cv2.circle(viz, (target_x, y_ref), self.draw_radius, (255, 0, 0), -1)
-            cv2.putText(viz, "target", (target_x + 8, y_ref - 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2, cv2.LINE_AA)
+            cv2.circle(viz, (int(target_x), y_ref), 6, (255, 0, 0), -1)
+            cv2.circle(viz, (int(right_cx), y_ref), 8, (0, 255, 255), 2)
 
-            # 선택된 blob 강조(노란 테두리)
-            # (선택된 cx와 가장 가까운 blob의 cy를 찾는 게 더 예쁘지만, 여기선 단순화)
-            # chosen 점은 y_ref에 찍어도 되고, 실제 blob의 중심에 찍어도 됨.
-            # 여기선 "실제 blob 중심" 중 right_cx에 해당하는 blob을 찾아서 찍음.
-            chosen_cy = y_ref
-            for b in blobs:
-                if abs(b["cx"] - right_cx) < 1e-3:
-                    chosen_cy = int(b["cy"])
-                    break
-
-            cv2.circle(viz, (int(right_cx), int(chosen_cy)), self.draw_radius + 3, (0, 255, 255), 2)
-
-            # 텍스트
-            cv2.putText(viz, f"right_cx={right_cx:.1f}", (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
-            cv2.putText(viz, f"target_x={target_x}", (20, 70),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
-            cv2.putText(viz, f"offset={offset:.1f}", (20, 100),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(
+                viz,
+                f"offset={offset:.1f}",
+                (20, 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 255),
+                2,
+            )
 
         return offset, debug, viz
+
