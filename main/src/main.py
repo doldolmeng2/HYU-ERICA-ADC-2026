@@ -300,6 +300,10 @@ class MainNode:
         # 위 로직들이 이미 그 흐름을 커버하도록 설계할 수 있음
         # -------------------------
 
+    def shutdown(self):
+        msg = Int16MultiArray()
+        msg.data = [0, 0]
+        self.pub_motor.publish(msg)
     # =========================
     # 메인 루프
     # =========================
@@ -357,7 +361,7 @@ class MainNode:
             #     rubbercone_found = self.rubber_nav.is_cone_found(scan_msg)
 
             # 흰 픽셀 다수 판정(갈림길에서 흰차선으로 넘어가는 트리거)
-            white_pixels_many = self.mask_proc.white_pixels_many(gray_label, thresh=3000)
+            white_pixels_many = self.mask_proc.white_pixels_many(gray_label, thresh=7000)
 
 
             # (예시) AR 판정(구현 예정)
@@ -478,10 +482,10 @@ class MainNode:
                         rospy.signal_shutdown("user quit (viz)")
                         break
 
-                    # if offset_viz is not None:
-                    #     cv2.imshow("offset_viz", offset_viz)
-                    # else:
-                    #     cv2.imshow("offset_viz", cv_img)
+                    if offset_viz is not None:
+                        cv2.imshow("offset_viz", offset_viz)
+                    else:
+                        cv2.imshow("offset_viz", cv_img)
 
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord("q"):
@@ -504,4 +508,4 @@ if __name__ == "__main__":
         node = MainNode()
         node.run()
     except rospy.ROSInterruptException:
-        pass
+        node.shutdown()

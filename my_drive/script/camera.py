@@ -26,6 +26,7 @@ def start_node():
     cap.set(cv2.CAP_PROP_FPS, 30)
     cap.set(cv2.CAP_PROP_CONTRAST, 145)
     cap.set(cv2.CAP_PROP_SATURATION, 200)
+    cap.set(cv2.CAP_PROP_BRIGHTNESS, 102)
 
 
     # ✅ 실제로 적용됐는지 확인(중요)

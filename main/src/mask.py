@@ -91,7 +91,7 @@ class MaskProcessor:
     def white_pixels_many(
         self,
         gray_label: np.ndarray,
-        thresh: int = 3000,
+        thresh: int = 7000,
         roi_y_start_ratio: float = 0.55,
         roi_y_end_ratio: float = 1.0
     ) -> bool:
@@ -121,4 +121,5 @@ class MaskProcessor:
         # 흰색(255) 픽셀 수 세기
         white_count = int(np.sum(roi == 255))
         # print("white_count : ", white_count)
+        print("white_count: ", white_count)
         return white_count >= thresh

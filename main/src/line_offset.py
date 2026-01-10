@@ -42,8 +42,10 @@ class LineOffsetEstimator:
 
         # ====== 목표 x ======
         # 640폭 기준 580이었으니 비율로도 가능: 580/640 ≈ 0.90625
-        self.target_x_ratio = 0.90625  # 기본: w*0.90625
+        self.target_x_ratio = 0.78  # 기본: w*0.90625
         self.target_x_right = None     # None이면 ratio 사용, 숫자 지정하면 그 값 사용
+
+        self.prev_offset = 0
 
         # ====== 노이즈 제거 ======
         self.min_area = 80     # ROI 내 blob 최소 면적(픽셀 수)

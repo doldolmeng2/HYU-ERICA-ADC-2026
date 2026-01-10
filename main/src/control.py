@@ -26,7 +26,7 @@ class Controller:
         # ====== offset -> steer 변환 스케일(모드별 P 게인) ======
         # offset 단위가 "픽셀"이면 P를 작게, "정규화(-1~1)"면 P를 크게 해야 함
         # 지금 offset은 (target_x - cx)라서 픽셀 단위일 확률 높음
-        self.kp_mode0 = 0.20
+        self.kp_mode0 = 0.6
         self.kp_mode1 = 0.20
         self.kp_mode2 = 0.15
         self.kp_mode4 = 0.25
@@ -34,7 +34,7 @@ class Controller:
 
         # ====== 모드별 속도(고정) ======
         # speed 단위는 너희 모터 노드 규격에 맞춰서 튜닝 필요
-        self.speed_mode0 = 90
+        self.speed_mode0 = 99
         self.speed_mode1 = 90
         self.speed_mode2 = 90
         self.speed_mode4 = 90
