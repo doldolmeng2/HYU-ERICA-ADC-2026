@@ -16,6 +16,7 @@ class RubberconeNavigator:
     def __init__(
         self,
         cluster_dist_m: float = 0.10,
+        flip_lr: bool = True,
         fov_deg: float = 60.0,
         min_range_m: float = 0.05,
         max_range_m: float = 1.0,
@@ -34,6 +35,8 @@ class RubberconeNavigator:
         # 창 이름 고정
         self.viz_win = "rubbercone_viz"
 
+        self.flip_lr = bool(flip_lr)
+
     # -----------------------------
     # 0) LaserScan -> (x,y,r,theta)
     # -----------------------------
@@ -46,27 +49,25 @@ class RubberconeNavigator:
         angle = scan_msg.angle_min
 
         for r in scan_msg.ranges:
-            if r is None or math.isinf(r) or math.isnan(r):
-                angle += scan_msg.angle_increment
-                continue
-            if r < self.min_range_m or r > self.max_range_m:
-                angle += scan_msg.angle_increment
-                continue
-
-            # ✅ 180도 뒤집힘 보정: angle에 pi 더하기
+            ...
             a = angle + math.pi
-
-            # ✅ -pi~pi로 wrap (FOV 필터 / 좌우 판정 안정화)
             a = self._wrap_to_pi(a)
 
-            x = r * math.cos(a)   # 전방 x
-            y = r * math.sin(a)   # 좌측 y
+            x = r * math.cos(a)
+            y = r * math.sin(a)
+            theta = a
 
-            pts.append((x, y, float(r), float(a)))
+            # ✅ 좌/우 반전 보정: y와 theta를 같이 뒤집어야 offset도 같이 정상화됨
+            if self.flip_lr:
+                y = -y
+                theta = -theta
+
+            pts.append((x, y, float(r), float(theta)))
             angle += scan_msg.angle_increment
 
-        pts.sort(key=lambda p: p[3])  # theta 기준 정렬
+        pts.sort(key=lambda p: p[3])
         return pts
+
 
     # -----------------------------
     # 1) 10cm 클러스터링 -> 대표점
@@ -102,8 +103,11 @@ class RubberconeNavigator:
     # 2) 라바콘 개수
     # -----------------------------
     def count_cones(self, scan_msg) -> int:
-        print("rubbercone number :", int(len(self.extract_cone_candidates(scan_msg))))
-        return int(len(self.extract_cone_candidates(scan_msg)))
+        cones = self.extract_cone_candidates(scan_msg)
+        cones_fov = [c for c in cones if abs(c["theta"]) <= self.fov_rad]
+        n = len(cones_fov)
+        print("rubbercone number (FOV):", n)
+        return n
 
     # -----------------------------
     # 3) FOV(±60도) 내 좌/우 1개씩
@@ -144,7 +148,7 @@ class RubberconeNavigator:
         # m -> px 스케일
         scale = (S * 0.8) / rng  # 화면 80%를 viz_range_m로 사용
 
-        px = int(origin_px + (y * scale))    # y(좌+) -> 화면 오른쪽(+)로
+        px = int(origin_px - (y * scale))    # y(좌+) -> 화면 오른쪽(+)로
         py = int(origin_py - (x * scale))    # x(전방+) -> 화면 위쪽(-)로
         return px, py
 
