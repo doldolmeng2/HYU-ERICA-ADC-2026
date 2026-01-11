@@ -299,8 +299,8 @@ class LineOffsetEstimator:
         # =============================
         # 1) ROI 설정
         # =============================
-        y0 = int(h * 0.65)
-        y1 = int(h * 0.70)
+        y0 = int(h * 0.70)
+        y1 = int(h * 0.75)
         y0 = max(0, min(h - 1, y0))
         y1 = max(0, min(h, y1))
         if y1 <= y0 + 1:
@@ -317,8 +317,8 @@ class LineOffsetEstimator:
         lane_width = float(getattr(self, "lane_width_px", 460.0))
         max_blob_width_ratio = float(getattr(self, "max_blob_width_ratio", 0.65))
 
-        # ✅ gate 기준 (왼쪽에서 40%)
-        gate_ratio = float(getattr(self, "gate_ratio", 0.25))
+        # ✅ gate 기준 (왼쪽에서 n%)
+        gate_ratio = float(getattr(self, "gate_ratio", 0.35))
         gate_x = float(w * gate_ratio)
 
         max_blob_width = w * max_blob_width_ratio

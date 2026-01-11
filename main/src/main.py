@@ -92,7 +92,7 @@ class MainNode:
         # self.mask_proc = MaskProcessor()
         # self.stopline_det = StopLineDetector()
         # self.tl_det = TrafficLightDetector()
-        self.rubber_nav = RubberconeNavigator()
+        self.rubber_nav = RubberconeNavigator(angle_offset_deg=180.0)
         self.offset_est = LineOffsetEstimator()
         self.controller = Controller()
 
@@ -345,7 +345,7 @@ class MainNode:
             yellow_mask, white_mask, gray_label = self.mask_proc.process(cv_img)
             
             # 시각화 
-            cv2.imshow("masked image", gray_label)
+            # cv2.imshow("masked image", gray_label)
 
             # (예시) 정지선 판정
             # if self.stopline_det is not None and masked_img is not None:
@@ -372,7 +372,7 @@ class MainNode:
             # rubbercone found
             if scan_msg is not None and self.rubber_nav is not None:
                 cone_count = self.rubber_nav.count_cones(scan_msg)
-                if self.mode == Modes.W_LANE_FOLLOW and cone_count >= 8:
+                if self.mode == Modes.W_LANE_FOLLOW and cone_count >= 6:
                     rubbercone_found = True
                 elif self.mode == Modes.RUBBERCONE and cone_count <= 2:
                     rubbercone_none = True
@@ -412,7 +412,7 @@ class MainNode:
             offset_viz = None
 
             if self.mode == Modes.RUBBERCONE and self.rubber_nav is not None:
-                    offset, debug_rc, rc_viz = self.rubber_nav.get_offset(scan_msg, enable_viz=True, show_viz=True)
+                    offset, debug, viz = self.rubber_nav.get_offset(scan_msg, enable_viz=True, show_viz=True)
             else:
                 if self.offset_est is not None and gray_label is not None:
                     offset, debug_offset, offset_viz = self.offset_est.get_offset(
@@ -489,8 +489,8 @@ class MainNode:
 
                     # 창 띄우기
                     cv2.imshow(self.viz_win, cv_img)
-
-                    # q 누르면 안전 종료
+                    # cv2.imshow("rubbercone", viz)
+                    # q 누르면 안전 종료    
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord("q"):
                         rospy.signal_shutdown("user quit (viz)")
