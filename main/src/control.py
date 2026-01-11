@@ -28,7 +28,7 @@ class Controller:
         # 지금 offset은 (target_x - cx)라서 픽셀 단위일 확률 높음
         self.kp_mode0 = 0.6
         self.kp_mode1 = 0.20
-        self.kp_mode2 = 0.15
+        self.kp_mode2 = 0.11
         self.kp_mode4 = 0.25
         self.kp_mode5 = 0.18
 
@@ -36,7 +36,7 @@ class Controller:
         # speed 단위는 너희 모터 노드 규격에 맞춰서 튜닝 필요
         self.speed_mode0 = 99
         self.speed_mode1 = 90
-        self.speed_mode2 = 90
+        self.speed_mode2 = 100
         self.speed_mode4 = 90
         self.speed_mode5 = 90
 

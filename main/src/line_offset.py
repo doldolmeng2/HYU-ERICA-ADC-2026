@@ -38,6 +38,7 @@ class LineOffsetEstimator:
         self.fallback_offset = 150.0
 
         # ====== 대상 레이블 값 ======
+        self.white_value = 255
         self.yellow_value = 128
 
         # ====== 목표 x ======
@@ -54,8 +55,15 @@ class LineOffsetEstimator:
         # ====== 시각화 ======
         self.draw_radius = 6
 
-        # ====== 흰차선 너비값 ======
+        # ====== 흰차선 params ======
         self.lane_width_px = 460.0
+        self.min_area = 80          # 예시 (너가 쓰던 값으로)
+        self.draw_radius = 6        # 예시
+        self.prev_offset = 0.0
+        self.lane_width_px = 460.0
+        self.max_blob_width_ratio = 0.65
+
+        
 
 
     def get_offset(self, gray_label: np.ndarray, mode: int, frame_bgr=None, enable_viz: bool = False):
@@ -265,30 +273,32 @@ class LineOffsetEstimator:
         enable_viz: bool = False
     ):
         """
-        mode2: 흰 차선(255) 기반으로 좌/우 차선을 잡아서 offset 계산
+        mode2: 흰 차선 기반 좌/우 차선 추정 (gate 기준 버전)
 
-        - ROI(roi_y_start_ratio~roi_y_end_ratio)에서 흰색 blob들을 찾음
-        - 화면 중앙(mid_x)을 기준으로
-            left 후보: cx < mid_x
-            right 후보: cx > mid_x
-        로 분리
-        - left는 left 후보 중 "가장 중앙에 가까운 것" (= cx가 최대인 left)
-        - right는 right 후보 중 "가장 중앙에 가까운 것" (= cx가 최소인 right)
-        - 둘 다 있으면 lane_center = (left + right)/2
-        - 한쪽만 있으면 lane_width(픽셀, 고정값)로 lane_center 추정
-            right만: lane_center = right - lane_width/2
-            left만 : lane_center = left  + lane_width/2
-        - offset = lane_center - mid_x
-        - 실패(둘 다 없음) 시 이전 offset 유지
+        [핵심 변경점]
+        - left/right 분류 기준을 mid_x(화면 중앙) -> gate_x(왼쪽에서 40%)로 변경
+        gate_ratio 기본값 0.40 (추후 변경 가능)
+
+        [규칙]
+        1) ROI(0.65~0.70)에서 흰색(255) blob 검출
+        2) 너무 넓은 blob(정지선/흰 영역)은 제거 -> 없으면 prev_offset 유지
+        3) gate_x 기준:
+        - cx < gate_x  -> left
+        - cx >= gate_x -> right
+        4) left가 2개 이상이면 가장 왼쪽(cx 최소) 1개만
+        right가 2개 이상이면 가장 오른쪽(cx 최대) 1개만
+        5) left/right 둘다 있으면 중앙 = (L+R)/2
+        left만 있으면 중앙 = L + lane_width/2
+        right만 있으면 중앙 = R - lane_width/2
+        6) offset = lane_center - mid_x
         """
 
         h, w = gray_label.shape[:2]
         mid_x = w * 0.5
 
         # =============================
-        # 1) ROI 설정 (요청값)
+        # 1) ROI 설정
         # =============================
-        # 요청: 0.65 ~ 0.70
         y0 = int(h * 0.65)
         y1 = int(h * 0.70)
         y0 = max(0, min(h - 1, y0))
@@ -302,11 +312,21 @@ class LineOffsetEstimator:
         debug["mid_x"] = mid_x
 
         # =============================
-        # 2) 차선 폭(픽셀) 추정값
+        # 2) 파라미터
         # =============================
-        # 사용자가 나중에 직접 넣을 거라 했으니 파라미터로 빼둠
         lane_width = float(getattr(self, "lane_width_px", 460.0))
+        max_blob_width_ratio = float(getattr(self, "max_blob_width_ratio", 0.65))
+
+        # ✅ gate 기준 (왼쪽에서 40%)
+        gate_ratio = float(getattr(self, "gate_ratio", 0.25))
+        gate_x = float(w * gate_ratio)
+
+        max_blob_width = w * max_blob_width_ratio
+
         debug["lane_width_px"] = lane_width
+        debug["max_blob_width"] = max_blob_width
+        debug["gate_ratio"] = gate_ratio
+        debug["gate_x"] = gate_x
 
         # =============================
         # 3) 시각화 캔버스
@@ -321,13 +341,17 @@ class LineOffsetEstimator:
             # 중앙선(파랑)
             cv2.line(viz, (int(mid_x), 0), (int(mid_x), h - 1), (255, 0, 0), 2)
 
+            # gate선(빨강)
+            cv2.line(viz, (int(gate_x), 0), (int(gate_x), h - 1), (0, 0, 255), 2)
+            cv2.putText(viz, f"gate={gate_ratio:.2f}", (int(gate_x) + 5, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2, cv2.LINE_AA)
+
         # =============================
-        # 4) ROI에서 흰색 마스크 생성
+        # 4) ROI 흰색 마스크 생성
         # =============================
         roi = gray_label[y0:y1, :]
-        white_bin = (roi == self.white_value).astype(np.uint8) * 255  # 0/255
+        white_bin = (roi == self.white_value).astype(np.uint8) * 255
 
-        # 모폴로지 open (선택)
         if getattr(self, "morph_open", 0) and self.morph_open > 0:
             k = self.morph_open
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
@@ -338,91 +362,94 @@ class LineOffsetEstimator:
         # =============================
         num, labels, stats, centroids = cv2.connectedComponentsWithStats(white_bin, connectivity=8)
 
-        left_candidates = []   # (cx, cy, bbox, area)
-        right_candidates = []
+        valid_blobs = []  # (cx_full, cy_full, bw, bh, area, x, y)
 
-        all_blobs = []
         for i in range(1, num):
             x, y, bw, bh, area = stats[i]
             if area < self.min_area:
                 continue
 
-            cx, cy = centroids[i]          # ROI 좌표
-            cx_full = float(cx)            # 전체 x 그대로
-            cy_full = float(cy + y0)       # 전체 y로 변환
+            # ❗ 너무 넓은 blob 제거
+            if bw > max_blob_width:
+                debug.setdefault("ignored_blobs", []).append(
+                    {"bw": int(bw), "area": int(area), "reason": "too wide"}
+                )
+                if viz is not None:
+                    cv2.rectangle(viz,
+                                (int(x), int(y + y0)),
+                                (int(x + bw), int(y + y0 + bh)),
+                                (255, 0, 255), 3)
+                continue
 
-            bbox_full = (int(x), int(y + y0), int(bw), int(bh))
+            cx, cy = centroids[i]
+            cx_full = float(cx)
+            cy_full = float(cy + y0)
 
-            all_blobs.append({"cx": cx_full, "cy": cy_full, "area": int(area), "bbox": bbox_full})
+            valid_blobs.append((cx_full, cy_full, bw, bh, area, x, y))
 
-            # 중앙 기준 분리
-            if cx_full < mid_x:
-                left_candidates.append((cx_full, cy_full, bbox_full, int(area)))
-            elif cx_full > mid_x:
-                right_candidates.append((cx_full, cy_full, bbox_full, int(area)))
-
-            # 시각화: 모든 blob 중심 빨강 점 + bbox
             if viz is not None:
                 cv2.circle(viz, (int(cx_full), int(cy_full)), self.draw_radius, (0, 0, 255), -1)
-                cv2.rectangle(
-                    viz,
-                    (bbox_full[0], bbox_full[1]),
-                    (bbox_full[0] + bbox_full[2], bbox_full[1] + bbox_full[3]),
-                    (0, 0, 255),
-                    1
-                )
 
-        debug["blob_count"] = len(all_blobs)
-        debug["all_blobs"] = all_blobs
-        debug["left_candidate_count"] = len(left_candidates)
-        debug["right_candidate_count"] = len(right_candidates)
+        debug["valid_blob_count"] = len(valid_blobs)
 
-        # =============================
-        # 6) left/right 선택
-        # =============================
-        left = None
-        right = None
-
-        # left: 중앙에 가장 가까운(= 가장 오른쪽 left) => cx 최대
-        if len(left_candidates) > 0:
-            left = max(left_candidates, key=lambda t: t[0])  # (cx, cy, bbox, area)
-
-        # right: 중앙에 가장 가까운(= 가장 왼쪽 right) => cx 최소
-        if len(right_candidates) > 0:
-            right = min(right_candidates, key=lambda t: t[0])
-
-        debug["chosen_left"] = None if left is None else {"cx": left[0], "cy": left[1], "bbox": left[2], "area": left[3]}
-        debug["chosen_right"] = None if right is None else {"cx": right[0], "cy": right[1], "bbox": right[2], "area": right[3]}
-
-        # =============================
-        # 7) lane_center 계산 + offset
-        # =============================
-        if left is None and right is None:
-            # 둘 다 없음: 이전 offset 유지
+        if len(valid_blobs) == 0:
             debug["fallback"] = True
-            debug["reason"] = "no left/right lane detected"
-            debug["lane_center_x"] = None
+            debug["reason"] = "no valid white blobs"
             debug["offset"] = self.prev_offset
             return self.prev_offset, debug, viz
 
-        # 둘 다 있으면 평균
-        if left is not None and right is not None:
-            lane_center_x = 0.5 * (left[0] + right[0])
+        # =============================
+        # 6) gate_x 기준 left/right 그룹화
+        # =============================
+        left_group = [b for b in valid_blobs if b[0] < gate_x]
+        right_group = [b for b in valid_blobs if b[0] >= gate_x]
+
+        debug["left_count_raw"] = len(left_group)
+        debug["right_count_raw"] = len(right_group)
+
+        # =============================
+        # 7) left/right 최대 1개로 축약
+        #    left: 2개 이상이면 가장 왼쪽(cx 최소)
+        #    right: 2개 이상이면 가장 오른쪽(cx 최대)
+        # =============================
+        left_blob = None
+        right_blob = None
+
+        if len(left_group) >= 1:
+            left_blob = min(left_group, key=lambda b: b[0])   # 가장 왼쪽
+        if len(right_group) >= 1:
+            right_blob = max(right_group, key=lambda b: b[0]) # 가장 오른쪽
+
+        debug["left_blob"] = None if left_blob is None else {"cx": float(left_blob[0]), "cy": float(left_blob[1])}
+        debug["right_blob"] = None if right_blob is None else {"cx": float(right_blob[0]), "cy": float(right_blob[1])}
+
+        # =============================
+        # 8) lane_center 계산 (요구사항 반영)
+        # =============================
+        if left_blob is not None and right_blob is not None:
+            lane_center_x = 0.5 * (left_blob[0] + right_blob[0])
             debug["center_estimation"] = "both"
 
-        # right만 있으면: lane_center = right - lane_width/2
-        elif right is not None:
-            lane_center_x = right[0] - lane_width * 0.5
-            debug["center_estimation"] = "right_only"
+        elif left_blob is not None:
+            # ✅ left만 있으면 오른쪽으로 폭/2 이동
+            lane_center_x = left_blob[0] + lane_width * 0.5
+            debug["center_estimation"] = "left_only(+width/2)"
 
-        # left만 있으면: lane_center = left + lane_width/2
+        elif right_blob is not None:
+            # ✅ right만 있으면 왼쪽으로 폭/2 이동
+            lane_center_x = right_blob[0] - lane_width * 0.5
+            debug["center_estimation"] = "right_only(-width/2)"
+
         else:
-            lane_center_x = left[0] + lane_width * 0.5
-            debug["center_estimation"] = "left_only"
+            debug["fallback"] = True
+            debug["reason"] = "no blob after gate split"
+            debug["offset"] = self.prev_offset
+            return self.prev_offset, debug, viz
 
+        # =============================
+        # 9) offset 계산 + prev_offset 갱신
+        # =============================
         offset = float(lane_center_x - mid_x)
-
-        # 정상 업데이트
         self.prev_offset = offset
 
         debug["fallback"] = False
@@ -430,39 +457,32 @@ class LineOffsetEstimator:
         debug["offset"] = offset
 
         # =============================
-        # 8) 시각화 추가 (mode0 스타일)
+        # 10) 시각화
         # =============================
         if viz is not None:
             y_ref = int((y0 + y1) * 0.5)
 
-            # 이미지 중앙(파랑 점)
+            # 중앙(mid) 파랑
             cv2.circle(viz, (int(mid_x), y_ref), self.draw_radius, (255, 0, 0), -1)
-            cv2.putText(viz, "img_center", (int(mid_x) + 8, y_ref - 8),
+            cv2.putText(viz, "mid", (int(mid_x) + 8, y_ref - 8),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2, cv2.LINE_AA)
 
-            # 추정 lane_center(노랑 점)
+            # lane center 노랑
             cv2.circle(viz, (int(lane_center_x), y_ref), self.draw_radius, (0, 255, 255), -1)
-            cv2.putText(viz, "lane_center", (int(lane_center_x) + 8, y_ref - 8),
+            cv2.putText(viz, "center", (int(lane_center_x) + 8, y_ref - 8),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
 
-            # left 선택 강조(초록 원)
-            if left is not None:
-                cv2.circle(viz, (int(left[0]), int(left[1])), self.draw_radius + 4, (0, 255, 0), 2)
-                cv2.putText(viz, f"L={left[0]:.1f}", (int(left[0]) + 8, int(left[1]) - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
+            # left/right 강조
+            if left_blob is not None:
+                cv2.circle(viz, (int(left_blob[0]), int(left_blob[1])), self.draw_radius + 4, (0, 255, 0), 2)
+            if right_blob is not None:
+                cv2.circle(viz, (int(right_blob[0]), int(right_blob[1])), self.draw_radius + 4, (0, 165, 255), 2)
 
-            # right 선택 강조(주황 원)
-            if right is not None:
-                cv2.circle(viz, (int(right[0]), int(right[1])), self.draw_radius + 4, (0, 165, 255), 2)
-                cv2.putText(viz, f"R={right[0]:.1f}", (int(right[0]) + 8, int(right[1]) - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2, cv2.LINE_AA)
-
-            # 텍스트
-            cv2.putText(viz, f"est={debug['center_estimation']}", (20, 40),
+            cv2.putText(viz, f"mode2 {debug['center_estimation']}", (20, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
-            cv2.putText(viz, f"lane_center_x={lane_center_x:.1f}", (20, 70),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
-            cv2.putText(viz, f"offset={offset:.1f}", (20, 100),
+            cv2.putText(viz, f"offset={offset:.1f}", (20, 70),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
 
         return offset, debug, viz
+
+

@@ -302,7 +302,7 @@ class MainNode:
 
     def shutdown(self):
         msg = Int16MultiArray()
-        msg.data = [0, 0]
+        msg.data = [90, 90]
         self.pub_motor.publish(msg)
     # =========================
     # 메인 루프
@@ -504,8 +504,12 @@ class MainNode:
 
 
 if __name__ == "__main__":
+    node = None
     try:
         node = MainNode()
         node.run()
     except rospy.ROSInterruptException:
-        node.shutdown()
+        pass
+    finally:
+        if node is not None:
+            node.shutdown()
