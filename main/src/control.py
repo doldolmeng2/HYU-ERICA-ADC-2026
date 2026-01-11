@@ -36,7 +36,7 @@ class Controller:
         # speed 단위는 너희 모터 노드 규격에 맞춰서 튜닝 필요
         self.speed_mode0 = 99
         self.speed_mode1 = 90
-        self.speed_mode2 = 100
+        self.speed_mode2 = 90
         self.speed_mode4 = 90
         self.speed_mode5 = 90
 

@@ -121,5 +121,5 @@ class MaskProcessor:
         # 흰색(255) 픽셀 수 세기
         white_count = int(np.sum(roi == 255))
         # print("white_count : ", white_count)
-        print("white_count: ", white_count)
+        # print("white_count: ", white_count)
         return white_count >= thresh

@@ -9,7 +9,7 @@ from cv_bridge import CvBridge
 from mask import MaskProcessor
 # from stop_line import StopLineDetector
 # from traffic_light import TrafficLightDetector
-# from rubbercone import RubberconeNavigator
+from rubbercone import RubberconeNavigator
 from line_offset import LineOffsetEstimator
 from control import Controller
 
@@ -60,7 +60,7 @@ class MainNode:
         # =========================
         # 3) 모드(state) 관련 변수
         # =========================
-        self.mode = Modes.Y_SPLIT_RIGHT  # 시작 모드(설계에 맞게)
+        self.mode = Modes.W_LANE_FOLLOW  # 시작 모드(설계에 맞게)
         self.mode_enter_time = rospy.Time.now()  # 현재 모드에 진입한 시간(타이머 조건에 활용)
 
         # 흰색 정지선 감지 횟수 카운팅(설계에 있음)
@@ -92,7 +92,7 @@ class MainNode:
         # self.mask_proc = MaskProcessor()
         # self.stopline_det = StopLineDetector()
         # self.tl_det = TrafficLightDetector()
-        # self.rubber_nav = RubberconeNavigator()
+        self.rubber_nav = RubberconeNavigator()
         self.offset_est = LineOffsetEstimator()
         self.controller = Controller()
 
@@ -204,6 +204,7 @@ class MainNode:
                                 white_stopline: bool,
                                 green_light: bool,
                                 rubbercone_found: bool,
+                                rubbercone_none: bool,
                                 white_pixels_many: bool,
                                 ar_found: bool):
         """
@@ -270,7 +271,7 @@ class MainNode:
         # -------------------------
         if self.mode == Modes.RUBBERCONE:
             # 라바콘이 더 이상 안 보이면 -> 흰 차선 주행으로 복귀
-            if not rubbercone_found:
+            if rubbercone_none:
                 print("mode change acc5")
                 self.set_mode(Modes.W_LANE_FOLLOW)
                 return
@@ -333,6 +334,7 @@ class MainNode:
             white_stopline = False
             green_light = False
             rubbercone_found = False
+            rubbercone_none = False
             white_pixels_many = False
             ar_found = False
 
@@ -356,13 +358,24 @@ class MainNode:
             # if self.tl_det is not None:
             #     green_light = self.tl_det.detect_green(img_msg)
 
-            # (예시) 라바콘 판정(라이다 기반)
-            # if self.rubber_nav is not None:
-            #     rubbercone_found = self.rubber_nav.is_cone_found(scan_msg)
+            # scan_msg가 있을 때만
+            if scan_msg is not None:
+                cone_count = self.rubber_nav.count_cones(scan_msg)
+
+                # 예: 흰 차선 주행 모드(mode2) 중 라바콘이 충분히 보이면 라바콘 모드로 전환
+                if self.mode == 2 and cone_count >= 4:
+                    self.mode = 4  # (예) RUBBERCONE 모드 번호. 너가 쓰는 enum에 맞게 바꿔
 
             # 흰 픽셀 다수 판정(갈림길에서 흰차선으로 넘어가는 트리거)
             white_pixels_many = self.mask_proc.white_pixels_many(gray_label, thresh=7000)
 
+            # rubbercone found
+            if scan_msg is not None and self.rubber_nav is not None:
+                cone_count = self.rubber_nav.count_cones(scan_msg)
+                if self.mode == Modes.W_LANE_FOLLOW and cone_count >= 8:
+                    rubbercone_found = True
+                elif self.mode == Modes.RUBBERCONE and cone_count <= 2:
+                    rubbercone_none = True
 
             # (예시) AR 판정(구현 예정)
             # ar_found = False
@@ -386,6 +399,7 @@ class MainNode:
                 white_stopline=white_stopline,
                 green_light=green_light,
                 rubbercone_found=rubbercone_found,
+                rubbercone_none = rubbercone_none,
                 white_pixels_many=white_pixels_many,
                 ar_found=ar_found
             )
@@ -398,12 +412,12 @@ class MainNode:
             offset_viz = None
 
             if self.mode == Modes.RUBBERCONE and self.rubber_nav is not None:
-                offset = self.rubber_nav.get_offset(scan_msg)
+                    offset, debug_rc, rc_viz = self.rubber_nav.get_offset(scan_msg, enable_viz=True, show_viz=True)
             else:
                 if self.offset_est is not None and gray_label is not None:
                     offset, debug_offset, offset_viz = self.offset_est.get_offset(
                         gray_label=gray_label,
-                        mode=self.mode,
+                        mode=self.mode, 
                         frame_bgr=cv_img,        
                         enable_viz=True         
                     )
