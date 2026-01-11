@@ -7,7 +7,7 @@ import cv2
 from cv_bridge import CvBridge
 # TODO: 아래 모듈들은 네가 이후 구현할 파일들
 from mask import MaskProcessor
-# from stop_line import StopLineDetector
+from stop_line import StopLineDetector
 # from traffic_light import TrafficLightDetector
 from rubbercone import RubberconeNavigator
 from line_offset import LineOffsetEstimator
@@ -90,7 +90,10 @@ class MainNode:
 
         # TODO: 네가 각 파일 구현하면 아래 주석을 풀어서 사용하면 됨
         # self.mask_proc = MaskProcessor()
-        # self.stopline_det = StopLineDetector()
+        self.stopline_det = StopLineDetector(
+            yellow_ratio_thresh=0.05,  # 필요하면 조정
+            white_ratio_thresh=0.05
+        )
         # self.tl_det = TrafficLightDetector()
         self.rubber_nav = RubberconeNavigator(angle_offset_deg=180.0)
         self.offset_est = LineOffsetEstimator()
@@ -111,6 +114,7 @@ class MainNode:
         if self.enable_viz:
             cv2.namedWindow(self.viz_win, cv2.WINDOW_NORMAL)
             cv2.moveWindow(self.viz_win, 50, 50)
+
 
     # =========================
     # 콜백: 이미지 수신
@@ -353,7 +357,13 @@ class MainNode:
             #         yellow_stopline = self.stopline_det.detect(masked_img, mode=self.mode)
             #     elif self.mode == Modes.W_LANE_FOLLOW:
             #         white_stopline = self.stopline_det.detect(masked_img, mode=self.mode)
-
+            if self.stopline_det is not None and gray_label is not None:
+                detected, viz, dbg = self.stopline_det.detect(gray_label, mode=self.mode, enable_viz=True)
+                stopline_viz = viz
+                if self.mode in (Modes.Y_SPLIT_RIGHT, Modes.Y_SPLIT_LEFT):
+                    yellow_stopline = detected
+                elif self.mode == Modes.W_LANE_FOLLOW:
+                    white_stopline = detected
             # (예시) 신호등 판정
             # if self.tl_det is not None:
             #     green_light = self.tl_det.detect_green(img_msg)
@@ -496,6 +506,8 @@ class MainNode:
                         rospy.signal_shutdown("user quit (viz)")
                         break
 
+                    if stopline_viz is not None:
+                        cv2.imshow("stopline_viz", stopline_viz)        
                     if offset_viz is not None:
                         cv2.imshow("offset_viz", offset_viz)
                     else:
